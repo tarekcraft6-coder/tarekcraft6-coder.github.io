@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "temple_vault_v1";
+  const STORAGE_KEY = "vault_net_v2";
   const GLYPHS = "01ABCDEF#$%*+/=<>█▓▒░";
 
   const SEED_MEMBERS = [
@@ -69,7 +69,7 @@
 
   const STRINGS = {
     ar: {
-      brandSub: "ملوك طويق",
+      brandSub: "الشبكة",
       logout: "خروج",
       gateStatus: "أدخل الشِفرة للدخول",
       gateHint: "أربع خانات · شِفرة العضو فقط",
@@ -89,19 +89,23 @@
       conversations: "المحادثات",
       fieldName: "الاسم",
       fieldPhone: "الجوال",
-      fieldCity: "المدينة",
+      fieldCity: "المدينة المسجّلة",
+      fieldLiveLoc: "موقعك الحالي",
+      fieldIp: "عنوان IP",
+      fieldIsp: "الشبكة",
+      locUnknown: "تعذر تحديد الموقع",
       fieldRole: "الرتبة",
       fieldCipher: "الشِفرة",
       roleAdmin: "الملك الأعلى",
       roleMember: "ملك",
       welcomeBot:
-        "أهلاً سيدي. لقد تجاوزت الشِفرة.\nتم التعرف على هويتك ضمن شبكة ملوك طويق.\nأنت {name} · صاحب الشِفرة {code}.\nأنا رسول القناة. اكتب وسأرد عليك.",
+        "أهلاً سيدي. لقد تجاوزت الشِفرة.\nتم التعرف على هويتك ضمن الشبكة.\nأنت {name} · صاحب الشِفرة {code}.\nأنا رسول القناة. اكتب وسأرد عليك.",
       noConvos: "لا محادثات بعد.",
       you: "أنت",
-      guardian: "TUWAIQ://herald",
+      guardian: "VAULT://herald",
     },
     en: {
-      brandSub: "Kings of Tuwaiq",
+      brandSub: "NETWORK",
       logout: "Logout",
       gateStatus: "Enter your cipher to proceed",
       gateHint: "Four cells · member cipher only",
@@ -121,16 +125,20 @@
       conversations: "Conversations",
       fieldName: "Name",
       fieldPhone: "Phone",
-      fieldCity: "City",
+      fieldCity: "Registered city",
+      fieldLiveLoc: "Current location",
+      fieldIp: "IP address",
+      fieldIsp: "Network",
+      locUnknown: "Location unavailable",
       fieldRole: "Rank",
       fieldCipher: "Cipher",
       roleAdmin: "High King",
       roleMember: "King",
       welcomeBot:
-        "Welcome, sir. Cipher cleared.\nIdentity matched inside the Kings of Tuwaiq network.\nYou are {name} · cipher holder {code}.\nI am the channel herald. Write and I will reply.",
+        "Welcome, sir. Cipher cleared.\nIdentity matched inside the network.\nYou are {name} · cipher holder {code}.\nI am the channel herald. Write and I will reply.",
       noConvos: "No conversations yet.",
       you: "You",
-      guardian: "TUWAIQ://herald",
+      guardian: "VAULT://herald",
     },
   };
 
@@ -169,9 +177,25 @@
         return s;
       }
       const merged = Object.assign(defaultState(), parsed);
+      merged.members = (merged.members || []).map(function (m) {
+        var seed = SEED_MEMBERS.find(function (s) {
+          return s.id === m.id;
+        });
+        if (!seed) return m;
+        return {
+          id: seed.id,
+          nameAr: seed.nameAr,
+          nameEn: seed.nameEn,
+          code: seed.code,
+          role: seed.role,
+          phone: seed.phone,
+          cityAr: seed.cityAr,
+          cityEn: seed.cityEn,
+        };
+      });
       SEED_MEMBERS.forEach(function (seed) {
         var exists = merged.members.some(function (m) {
-          return m.id === seed.id || m.code.toUpperCase() === seed.code.toUpperCase();
+          return m.id === seed.id;
         });
         if (!exists) merged.members.push(JSON.parse(JSON.stringify(seed)));
       });
@@ -188,11 +212,69 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
   }
 
+  function cloneMember(member) {
+    return {
+      id: member.id,
+      nameAr: member.nameAr,
+      nameEn: member.nameEn,
+      code: member.code,
+      role: member.role,
+      phone: member.phone,
+      cityAr: member.cityAr,
+      cityEn: member.cityEn,
+    };
+  }
+
   function findByCode(s, code) {
     const normalized = String(code || "").trim().toUpperCase();
-    return s.members.find(function (m) {
+    var seed = SEED_MEMBERS.find(function (m) {
       return m.code.toUpperCase() === normalized;
-    }) || null;
+    });
+    if (seed) return cloneMember(seed);
+    var extra = s.members.find(function (m) {
+      return m.code.toUpperCase() === normalized;
+    });
+    return extra ? cloneMember(extra) : null;
+  }
+
+  function formatLiveLoc(live, lang) {
+    if (!live || (!live.city && !live.region && !live.country)) {
+      return t(lang, "locUnknown");
+    }
+    var parts = [live.city, live.region, live.country].filter(Boolean);
+    var unique = [];
+    parts.forEach(function (p) {
+      if (unique.indexOf(p) === -1) unique.push(p);
+    });
+    return unique.join(" · ");
+  }
+
+  async function fetchLiveNet() {
+    try {
+      var res = await fetch("https://ipwho.is/?lang=en", { cache: "no-store" });
+      var data = await res.json();
+      if (data && data.success !== false && data.ip) {
+        return {
+          ip: data.ip,
+          city: data.city || "",
+          region: data.region || "",
+          country: data.country || "",
+          isp: (data.connection && data.connection.isp) || data.isp || "",
+        };
+      }
+    } catch (e) {}
+    try {
+      var ipRes = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
+      var ipData = await ipRes.json();
+      return {
+        ip: ipData.ip || "—",
+        city: "",
+        region: "",
+        country: "",
+        isp: "",
+      };
+    } catch (e2) {}
+    return { ip: "—", city: "", region: "", country: "", isp: "" };
   }
 
   function getChat(s, memberId) {
@@ -253,7 +335,7 @@
     screenEl.innerHTML = "";
     var name = lang === "en" ? member.nameEn : member.nameAr;
     var lines = [
-      { text: "> TUWAIQ://access boot…", cls: "dim" },
+      { text: "> VAULT://access boot…", cls: "dim" },
       { text: "> handshake: cipher_channel_ok", cls: "ok" },
       { text: "> resolve_token(" + member.code + ")", cls: "" },
       { text: "> decrypting member vector…", cls: "dim" },
@@ -291,8 +373,21 @@
     }
     if (q.indexOf("من انت") !== -1 || q.indexOf("who are you") !== -1 || q.indexOf("what are you") !== -1) {
       return lang === "en"
-        ? "I am TUWAIQ://herald — the channel voice for cipher holders. I reply with clarity, not noise."
-        : "أنا TUWAIQ://herald — رسول القناة لأصحاب الشِفر. أرد بوضوح، بلا ضجيج.";
+        ? "I am VAULT://herald — the channel voice for cipher holders. I reply with clarity, not noise."
+        : "أنا VAULT://herald — رسول القناة لأصحاب الشِفر. أرد بوضوح، بلا ضجيج.";
+    }
+    if (
+      q.indexOf("اي بي") !== -1 ||
+      q.indexOf("ip") !== -1 ||
+      q.indexOf("موقع") !== -1 ||
+      q.indexOf("location") !== -1 ||
+      q.indexOf("وين انا") !== -1
+    ) {
+      var live = sessionLive || {};
+      var loc = formatLiveLoc(live, lang);
+      return lang === "en"
+        ? "This session IP is " + (live.ip || "—") + ". Current location: " + loc + "."
+        : "آي بي هذه الجلسة: " + (live.ip || "—") + ". موقعك الحالي: " + loc + ".";
     }
     if (q.indexOf("شيفره") !== -1 || q.indexOf("شِفر") !== -1 || q.indexOf("cipher") !== -1 || q.indexOf("code") !== -1) {
       return lang === "en"
@@ -342,6 +437,7 @@
 
   var state = loadState();
   var sessionMember = null;
+  var sessionLive = null;
   var busy = false;
 
   function $(sel) {
@@ -438,13 +534,20 @@
     }
 
     busy = true;
-    sessionMember = member;
+    sessionMember = cloneMember(member);
+    sessionLive = null;
     showView("terminal");
-    await runAccessSequence($("#termScreen"), member, state.lang, function () {
-      renderReveal(member);
-      showView("reveal");
-      busy = false;
-    });
+    var livePromise = fetchLiveNet();
+    await runAccessSequence($("#termScreen"), sessionMember, state.lang, null);
+    sessionLive = await livePromise;
+    var locLine = formatLiveLoc(sessionLive, state.lang);
+    await typeLine($("#termScreen"), "> source_ip: " + sessionLive.ip, "ok");
+    await sleep(160);
+    await typeLine($("#termScreen"), "> geo: " + locLine, "ok");
+    await sleep(280);
+    renderReveal(sessionMember);
+    showView("reveal");
+    busy = false;
   }
 
   function renderMaskedPhone(phone) {
@@ -468,12 +571,18 @@
     var grid = $("#profileGrid");
     grid.innerHTML = "";
 
+    var live = sessionLive || {};
     var rows = [
       [t(lang, "fieldName"), memberName(member, lang)],
       [t(lang, "fieldCipher"), member.code],
       [t(lang, "fieldRole"), member.role === "admin" ? t(lang, "roleAdmin") : t(lang, "roleMember")],
       [t(lang, "fieldCity"), memberCity(member, lang)],
+      [t(lang, "fieldIp"), live.ip || "—"],
+      [t(lang, "fieldLiveLoc"), formatLiveLoc(live, lang)],
     ];
+    if (live.isp) {
+      rows.push([t(lang, "fieldIsp"), live.isp]);
+    }
 
     rows.forEach(function (pair) {
       var row = document.createElement("div");
@@ -623,7 +732,13 @@
 
   function logout() {
     sessionMember = null;
+    sessionLive = null;
     busy = false;
+    $("#profileGrid").innerHTML = "";
+    $("#revealTitle").textContent = "";
+    $("#chatLog").innerHTML = "";
+    $("#sessionName").textContent = "";
+    $("#sessionMeta").textContent = "";
     clearCipher();
     showView("gate");
   }
